@@ -1,0 +1,121 @@
+#########GEO data to build models################
+
+#install.packages('survival')
+
+library(survival)                                        
+setwd("...//data")       
+rt=read.table("expTime.txt",header=T,sep="\t",check.names=F,row.names=1)    
+rt$futime=rt$futime/12
+
+multiCox=coxph(Surv(futime, fustat) ~ ., data = rt)
+multiCoxSum=summary(multiCox)
+
+outTab=data.frame()
+outTab=cbind(
+
+             coef=multiCoxSum$coefficients[,"coef"],
+             HR=multiCoxSum$conf.int[,"exp(coef)"],
+             HR.95L=multiCoxSum$conf.int[,"lower .95"],
+             HR.95H=multiCoxSum$conf.int[,"upper .95"],
+             pvalue=multiCoxSum$coefficients[,"Pr(>|z|)"])
+outTab=cbind(id=row.names(outTab),outTab)
+outTab=gsub("`","",outTab)
+write.table(outTab,file="multiCox.xls",sep="\t",row.names=F,quote=F)
+
+
+riskScore=predict(multiCox,type="risk",newdata=rt)
+coxGene=rownames(multiCoxSum$coefficients)
+coxGene=gsub("`","",coxGene)
+outCol=c("futime","fustat",coxGene)
+risk=as.vector(ifelse(riskScore>median(riskScore),"high","low"))
+write.table(cbind(id=rownames(cbind(rt[,outCol],riskScore,risk)),cbind(rt[,outCol],riskScore,risk)),
+    file="risk.txt",
+    sep="\t",
+    quote=F,
+    row.names=F)
+
+###pheatmap####Figure 3A
+#install.packages("pheatmap")
+summary(fit)
+library(survival)
+library(survminer)
+library(timeROC)
+library(pheatmap)
+setwd("...//data")            
+rt=read.table("Risk.txt",sep="\t",header=T,row.names=1,check.names=F)     
+rt=rt[order(rt$riskScore),]                                   
+riskClass=rt[,"risk"]
+lowLength=length(riskClass[riskClass=="low"])
+highLength=length(riskClass[riskClass=="high"])
+line=rt[,"riskScore"]
+line[line>10]=10
+pdf(file="riskScore.pdf",width = 10,height = 3.5)
+plot(line,
+     type="p",
+     pch=20,
+     xlab="Patients (increasing risk socre)",
+     ylab="Risk score",
+     col=c(rep("blue",lowLength),
+     rep("orange",highLength)))
+abline(h=median(rt$riskScore),v=lowLength,lty=2)
+legend("topleft", c("High risk", "low Risk"),bty="n",pch=19,col=c("orange","blue"),cex=1.2)
+dev.off()
+
+######Figure 3B
+color=as.vector(rt$fustat)
+color[color==1]="orange"
+color[color==0]="blue"
+pdf(file="survStat.pdf",width = 10,height = 3.5)
+plot(rt$futime,
+     pch=19,
+     xlab="Patients (increasing risk socre)",
+     ylab="Survival time (years)",
+     col=color)
+legend("topleft", c("Dead", "Alive"),bty="n",pch=19,col=c("orange","blue"),cex=1.2)
+abline(v=lowLength,lty=2)
+dev.off()
+
+
+inputFile="risk.txt"        
+survFile="survival.pdf"         
+rocFile="ROC.pdf"               
+
+###Figure 3C
+rt=read.table(inputFile,header=T,sep="\t")
+diff=survdiff(Surv(futime, fustat) ~risk,data = rt)
+pValue=1-pchisq(diff$chisq,df=1)
+fit <- survfit(Surv(futime, fustat) ~ risk, data = rt)
+surPlot=ggsurvplot(fit, 
+                     data=rt,
+                     conf.int=T,
+                     pval=pValue,
+                     pval.size=5,
+                     risk.table=TRUE,
+                     legend.labs=c("High risk", "Low risk"),
+                     legend.title="Risk",
+                     xlab="Time(years)",
+                     break.time.by = 1,
+                     risk.table.title="",
+                     palette=c("red", "blue"),
+                     risk.table.height=.25)
+pdf(file=survFile,onefile = FALSE,width = 6.5,height =5.5)
+print(surPlot)
+dev.off()
+
+
+###Figure 3D
+ROC_rt=timeROC(T=rt$futime,delta=rt$fustat,
+               marker=rt$riskScore,cause=1,
+               weighting='aalen',
+               times=c(3,5,10),ROC=TRUE)
+pdf(file=rocFile,width=5,height=5)
+plot(ROC_rt,time=3,col='green',title=FALSE,lwd=2)
+plot(ROC_rt,time=5,col='blue',add=TRUE,title=FALSE,lwd=2)
+plot(ROC_rt,time=10,col='red',add=TRUE,title=FALSE,lwd=2)
+legend('bottomright',
+        c(paste0('AUC at 3 years: ',round(ROC_rt$AUC[1],3)),
+          paste0('AUC at 5 years: ',round(ROC_rt$AUC[2],3)),
+          paste0('AUC at 10 years: ',round(ROC_rt$AUC[3],3))),
+        col=c("green",'blue','red'),lwd=2,bty = 'n')
+dev.off()
+

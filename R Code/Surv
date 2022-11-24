@@ -1,0 +1,190 @@
+### R code
+######Screen for prognostic genes#####
+#install.packages("survival")
+
+library(survival)
+pFilter=0.05                                                             
+setwd("...//Data")                   
+rt=read.table("geneexp.txt",header=T,sep="\t",check.names=F,row.names=1)  
+rt$futime=rt$futime/365                                                    
+outTab=data.frame()
+sigGenes=c("futime","fustat")
+for(gene in colnames(rt[,3:ncol(rt)])){
+	   if(sd(rt[,gene])<0.01){
+	      next}
+	   a=rt[,gene]<=median(rt[,gene])
+	   diff=survdiff(Surv(futime, fustat) ~a,data = rt)
+	   pValue=1-pchisq(diff$chisq,df=1)
+	   fit=survfit(Surv(futime, fustat) ~ a, data = rt)
+	   cox=coxph(Surv(futime, fustat) ~ rt[,gene], data = rt)
+	   coxSummary = summary(cox)
+	   coxP=coxSummary$coefficients[,"Pr(>|z|)"]
+	   if((pValue<pFilter) & (coxP<pFilter)){
+	         sigGenes=c(sigGenes,gene)
+	       	 outTab=rbind(outTab,
+	                      cbind(gene=gene,
+	                            KM=pValue,
+	                            B=coxSummary$coefficients[,"coef"],
+	                            SE=coxSummary$coefficients[,"se(coef)"],
+	                            HR=coxSummary$conf.int[,"exp(coef)"],
+	                            HR.95L=coxSummary$conf.int[,"lower .95"],
+	                            HR.95H=coxSummary$conf.int[,"upper .95"],
+			                    pvalue=coxP) )
+	  }
+}
+write.table(outTab,file="uniCox.xls",sep="\t",row.names=F,quote=F)    
+write.table(outTab,file="uniCox.txt",sep="\t",row.names=F,quote=F)   
+uniSigExp=rt[,sigGenes]
+uniSigExp=cbind(id=row.names(uniSigExp),uniSigExp)
+write.table(uniSigExp,file="uniSigExp.txt",sep="\t",row.names=F,quote=F)
+
+
+###########Build the model##############
+#install.packages('survival')
+library(survival)                                         
+setwd("...//Data")       
+rt=read.table("uniSigExp.txt",header=T,sep="\t",check.names=F,row.names=1)    
+rt$futime=rt$futime
+multiCox=coxph(Surv(futime, fustat) ~ ., data = rt)
+multiCox=step(multiCox,direction = "both")
+multiCoxSum=summary(multiCox)
+outTab=data.frame()
+outTab=cbind(
+             coef=multiCoxSum$coefficients[,"coef"],
+             HR=multiCoxSum$conf.int[,"exp(coef)"],
+             HR.95L=multiCoxSum$conf.int[,"lower .95"],
+             HR.95H=multiCoxSum$conf.int[,"upper .95"],
+             pvalue=multiCoxSum$coefficients[,"Pr(>|z|)"])
+outTab=cbind(id=row.names(outTab),outTab)
+outTab=gsub("`","",outTab)
+write.table(outTab,file="multiCox.xls",sep="\t",row.names=F,quote=F)
+riskScore=predict(multiCox,type="risk",newdata=rt)
+coxGene=rownames(multiCoxSum$coefficients)
+coxGene=gsub("`","",coxGene)
+outCol=c("futime","fustat",coxGene)
+risk=as.vector(ifelse(riskScore>median(riskScore),"high","low"))
+write.table(cbind(id=rownames(cbind(rt[,outCol],riskScore,risk)),cbind(rt[,outCol],riskScore,risk)),
+    file="risk.txt",
+    sep="\t",
+    quote=F,
+    row.names=F)
+######drawing########
+#install.packages("pheatmap")
+summary(fit)
+library(survival)
+library(survminer)
+library(timeROC)
+library(pheatmap)
+setwd("...//data")            
+rt=read.table("Risk.txt",sep="\t",header=T,row.names=1,check.names=F)     
+rt=rt[order(rt$riskScore),]                                   
+riskClass=rt[,"risk"]
+lowLength=length(riskClass[riskClass=="low"])
+highLength=length(riskClass[riskClass=="high"])
+line=rt[,"riskScore"]
+line[line>10]=10
+pdf(file="riskScore.pdf",width = 10,height = 3.5)
+plot(line,
+     type="p",
+     pch=20,
+     xlab="Patients (increasing risk socre)",
+     ylab="Risk score",
+     col=c(rep("blue",lowLength),
+     rep("orange",highLength)))
+abline(h=median(rt$riskScore),v=lowLength,lty=2)
+legend("topleft", c("High risk", "low Risk"),bty="n",pch=19,col=c("orange","blue"),cex=1.2)
+dev.off()
+
+#Figure2 D
+color=as.vector(rt$fustat)
+color[color==1]="orange"
+color[color==0]="blue"
+pdf(file="survStat.pdf",width = 10,height = 3.5)
+plot(rt$futime,
+     pch=19,
+     xlab="Patients (increasing risk socre)",
+     ylab="Survival time (years)",
+     col=color)
+legend("topleft", c("Dead", "Alive"),bty="n",pch=19,col=c("orange","blue"),cex=1.2)
+abline(v=lowLength,lty=2)
+dev.off()
+
+#
+rt1=log2(rt[c(3:(ncol(rt)-2))]+0.01)
+rt1=t(rt1)
+annotation=data.frame(type=rt[,ncol(rt)])
+rownames(annotation)=rownames(rt)
+pdf(file="heatmap.pdf",width = 10,height = 3)
+pheatmap(rt1, 
+         annotation=annotation, 
+         cluster_cols = FALSE,
+         fontsize_row=11,
+         show_colnames = F,
+         fontsize_col=3,
+         color = colorRampPalette(c("blue", "white", "orange"))(50) )
+dev.off()
+###Figure2 B
+data=read.table("risk.txt",header=T,sep="\t",check.names=F)
+diff=survdiff(Surv(futime, fustat) ~risk,data = data)
+pValue=1-pchisq(diff$chisq,df=1)
+pValue=signif(pValue,4)
+pValue=format(pValue, scientific = TRUE)
+fit <- survfit(Surv(futime, fustat) ~ risk, data = data)
+pdf(file="survival.pdf",width=5.5,height=5)
+plot(fit,
+      lwd=2,
+      col=c("red","blue"),
+      xlab="Time (year)",
+      ylab="Survival rate",
+      main=paste("Survival curve (p=", pValue ,")",sep=""),
+      mark.time=T)
+legend("topright",
+      c("High risk", "Low risk"),
+     lwd=2,
+      col=c("red","blue"))
+dev.off()
+inputFile="risk.txt"        
+survFile="survival.pdf"         
+rocFile="ROC.pdf"               
+
+
+
+rt=read.table(inputFile,header=T,sep="\t")
+diff=survdiff(Surv(futime, fustat) ~risk,data = rt)
+pValue=1-pchisq(diff$chisq,df=1)
+fit <- survfit(Surv(futime, fustat) ~ risk, data = rt)
+#Figure2 E
+surPlot=ggsurvplot(fit, 
+                     data=rt,
+                     conf.int=T,
+                     pval=pValue,
+                     pval.size=5,
+                     risk.table=TRUE,
+                     legend.labs=c("High risk", "Low risk"),
+                     legend.title="Risk",
+                     xlab="Time(years)",
+                     break.time.by = 1,
+                     risk.table.title="",
+                     palette=c("red", "blue"),
+                     risk.table.height=.25)
+pdf(file=survFile,onefile = FALSE,width = 6.5,height =5.5)
+print(surPlot)
+dev.off()
+
+
+###Figure2 A
+ROC_rt=timeROC(T=rt$futime,delta=rt$fustat,
+               marker=rt$riskScore,cause=1,
+               weighting='aalen',
+               times=c(3,5,10),ROC=TRUE)
+pdf(file=rocFile,width=5,height=5)
+plot(ROC_rt,time=3,col='green',title=FALSE,lwd=2)
+plot(ROC_rt,time=5,col='blue',add=TRUE,title=FALSE,lwd=2)
+plot(ROC_rt,time=10,col='red',add=TRUE,title=FALSE,lwd=2)
+legend('bottomright',
+        c(paste0('AUC at 3 years: ',round(ROC_rt$AUC[1],3)),
+          paste0('AUC at 5 years: ',round(ROC_rt$AUC[2],3)),
+          paste0('AUC at 10 years: ',round(ROC_rt$AUC[3],3))),
+        col=c("red",'blue','orange'),lwd=2,bty = 'n')
+dev.off()
+

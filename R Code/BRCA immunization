@@ -1,0 +1,145 @@
+### R code
+####cibersort####
+setwd("cibersort")   
+install.packages('e1071')
+install.packages('parallel')
+#install.packages("BiocManager")
+BiocManager::install("preprocessCore")
+library(e1071)
+library(parallel)
+library(preprocessCore)
+source("CIBERSORT.R")   
+sig_matrix <- "LM22.txt"   
+mixture_file = 'BRCA_fpkm_mRNA_01A.txt'   
+res_cibersort <- CIBERSORT(sig_matrix, mixture_file, perm=100, QN=TRUE)
+write.table(res_cibersort,file="CIBERSORT-Results.txt",sep = "\t",row.names = T,col.names = NA,quote = F)  
+
+##### Figure 4A
+setwd("...//data")
+library(tidyverse)
+a <- read.table("CIBERSORT-Results.txt", sep = "\t",row.names = 1,check.names = F,header = T)
+a <- read.table("group.txt", sep = "\t",row.names = 1,check.names = F,header = T)
+a <- a[,1:22]
+identical(rownames(a),rownames(group))
+b <- group
+class(b$group)
+a$group <- b$group
+a <- a %>% rownames_to_column("sample")
+library(ggsci)
+library(tidyr)
+library(ggpubr)
+#install.packages("ggsci")
+#install.packages("tidyr")
+#install.packages("ggpubr")
+
+b <- gather(a,key=CIBERSORT,value = Proportion,-c(group,sample))
+
+ggboxplot(b, x = "CIBERSORT", y = "Proportion",
+          fill = "group", palette = "lancet")+
+  stat_compare_means(aes(group = group),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     symnum.args=list(cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("***", "**", "*", "ns")))+
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(angle=45, hjust=1)) 
+dev.off()
+
+######## Figure 4B
+setwd("...//data")
+BiocManager::install('GSVA')
+library(tidyverse)
+library(data.table)
+library(GSVA)
+
+cellMarker <- data.table::fread("cellMarker.csv",data.table = F)
+colnames(cellMarker)[2] <- "celltype"
+
+type <- split(cellMarker,cellMarker$celltype)
+
+cellMarker <- lapply(type, function(x){
+  dd = x$Metagene
+  unique(dd)
+})
+
+save(cellMarker,file = "cellMarker_ssGSEA.Rdata")
+load("immune_infiltration//cellMarker_ssGSEA.Rdata")
+
+
+expr <- data.table::fread("LIHC_fpkm_mRNA_01A.txt",data.table = F)   
+rownames(expr) <- expr[,1]   
+expr <- expr[,-1]   
+expr <- as.matrix(expr)   
+
+#Immunoinfiltration is quantified using ssGSEA
+gsva_data <- gsva(expr,cellMarker, method = "ssgsea")
+
+a <- gsva_data %>% t() %>% as.data.frame()
+identical(rownames(a),rownames(group))
+a$group <- group$group
+a <- a %>% rownames_to_column("sample")
+write.table(a,"ssGSEA.txt",sep = "\t",row.names = T,col.names = NA,quote = F)
+library(ggsci)
+library(tidyr)
+library(ggpubr)
+b <- gather(a,key=ssGSEA,value = Expression,-c(group,sample))
+
+ggboxplot(b, x = "ssGSEA", y = "Expression",
+          fill = "group", palette = "lancet")+
+  stat_compare_means(aes(group = group),
+                     method = "wilcox.test",
+                     label = "p.signif",
+                     symnum.args=list(cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("***", "**", "*", "ns")))+
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(angle=45, hjust=1)) 
+
+dev.off()
+
+###Figure4C
+library(GSVA)
+library(tidyverse)
+library(ggpubr)
+library(ggsci)
+Sys.setenv(LANGUAGE = "en") 
+options(stringsAsFactors = FALSE) 
+# Read in immune cell marker genes
+immunity <- read.table("immune_functions.txt", header = F)
+colnames(immunity) <- c("CellType","Symbol")
+
+
+immunity <- immunity %>% 
+  split(., .$CellType) %>% 
+  lapply(., function(x)(x$Symbol))
+immunity <- lapply(immunity, unique)
+#Quantify immune function with ssGSEA
+tcga_expr <- read.table("BRCA_fpkm_mRNA_01A.txt", row.names = 1,check.names = F)
+group <- read.table("risk.txt",header = T)
+group$group <- ifelse(group$group == 1, "low risk","high risk")
+tcga_expr1 <- tcga_expr[,rownames(group)]
+
+tcga_gsva <- as.data.frame(t(gsva(as.matrix(tcga_expr1), immunity, method = "ssgsea")))
+tcga_gsva$group <- group$group
+data <- reshape2::melt(tcga_gsva)
+ggplot(data, aes(variable, value)) +
+  geom_boxplot(aes(color = group, fill = group))+
+  scale_color_manual(values = c("black", "black")) +
+  scale_fill_manual(values = c("#00468bFF", "#ED0000FF")) +
+  stat_compare_means(aes(group = group), label = "p.signif") + theme_bw() + Seurat::RotatedAxis() +
+  theme(title = element_text(size = 20,colour = 'black'),
+        plot.title = element_text(hjust = 0.5),
+        panel.border = element_rect(fill=NA,color="black", size=2, linetype="solid"),
+        axis.ticks.y = element_line(color='black', size=2, lineend = 10),
+        legend.title = element_text(size = 13), 
+        legend.text = element_text(size = 13),
+        legend.key.size=unit(.5,'cm'),
+        legend.position = "top",
+        legend.box = "",
+        axis.text.y = element_text(size = 11,colour = 'black'),
+        axis.text.x = element_text(size = 11,colour = 'black'),
+        axis.title.x = element_text(size = 15,colour = 'black'),
+        axis.title.y = element_text(size = 15,colour = 'black'),
+        strip.text.x = element_text(size = 15,colour = 'black'))
+
+
+
